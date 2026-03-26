@@ -1,6 +1,6 @@
 {
   "name": "use-freshchat",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Modern React hooks for Freshchat. TypeScript-first, SSR-safe, Next.js compatible.",
   "type": "module",
   "license": "MIT",
