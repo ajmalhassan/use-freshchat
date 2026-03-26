@@ -5,6 +5,6 @@ export function withBrowser<T>(fn: () => T): T | undefined {
   return fn();
 }
 
-export function getFcWidget(): Window['fcWidget'] | undefined {
-  return withBrowser(() => window.fcWidget);
+export function getFcWidget() {
+  return withBrowser(() => window.fcWidget) ?? undefined;
 }

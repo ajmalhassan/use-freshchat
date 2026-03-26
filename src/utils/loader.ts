@@ -1,6 +1,9 @@
+import { isBrowser } from './guards';
+
 let scriptPromise: Promise<void> | null = null;
 
 export function loadFreshchatScript(host: string): Promise<void> {
+  if (!isBrowser) return Promise.resolve();
   if (scriptPromise) return scriptPromise;
 
   scriptPromise = new Promise((resolve, reject) => {

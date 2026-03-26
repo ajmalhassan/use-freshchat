@@ -18,7 +18,7 @@ export interface FreshchatUser {
   lastName?: string;
   email?: string;
   phone?: string;
-  meta?: Record<string, unknown>;
+  meta?: Record<string, string | number | boolean>;
 }
 
 export interface UserProperties {
@@ -72,6 +72,10 @@ export interface FreshchatProviderProps extends FreshchatWidgetConfig {
   children: React.ReactNode;
 }
 
+export type FreshchatUserState =
+  | { user: FreshchatUser; isLoggedIn: true }
+  | { user: null; isLoggedIn: false };
+
 export interface FreshchatContextValue {
   isLoaded: boolean;
   isInitialized: boolean;
@@ -94,29 +98,31 @@ export interface FreshchatContextValue {
   updateUser: (props: UserProperties) => Promise<void>;
 }
 
+export interface FcWidget {
+  init: (config: Record<string, unknown>) => void;
+  destroy: () => void;
+  isInitialized: () => boolean;
+  isLoaded: () => boolean;
+  isOpen: () => boolean;
+  open: (payload?: OpenPayload) => void;
+  close: () => void;
+  track: (event: string, data?: Record<string, unknown>) => void;
+  setTags: (tags: string[]) => void;
+  setFaqTags: (config: FaqTagConfig) => void;
+  on: (event: string, handler: (resp?: unknown) => void) => void;
+  off: (event: string, handler: (resp?: unknown) => void) => void;
+  user: {
+    get: (callback?: (resp: { status: number; data?: unknown }) => void) => Promise<unknown>;
+    create: () => Promise<void>;
+    update: (props: Record<string, unknown>) => Promise<void>;
+    clear: () => Promise<void>;
+    setProperties: (props: Record<string, unknown>) => void;
+    setLocale: (locale: string) => void;
+  };
+}
+
 declare global {
   interface Window {
-    fcWidget: {
-      init: (config: Record<string, unknown>) => void;
-      destroy: () => void;
-      isInitialized: () => boolean;
-      isLoaded: () => boolean;
-      isOpen: () => boolean;
-      open: (payload?: OpenPayload) => void;
-      close: () => void;
-      track: (event: string, data?: Record<string, unknown>) => void;
-      setTags: (tags: string[]) => void;
-      setFaqTags: (config: FaqTagConfig) => void;
-      on: (event: string, handler: (resp?: unknown) => void) => void;
-      off: (event: string, handler: (resp?: unknown) => void) => void;
-      user: {
-        get: (callback?: (resp: { status: number; data?: unknown }) => void) => Promise<unknown>;
-        create: () => Promise<void>;
-        update: (props: Record<string, unknown>) => Promise<void>;
-        clear: () => Promise<void>;
-        setProperties: (props: Record<string, unknown>) => void;
-        setLocale: (locale: string) => void;
-      };
-    };
+    fcWidget?: FcWidget;
   }
 }

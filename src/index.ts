@@ -12,6 +12,7 @@ export type {
   FreshchatProviderProps,
   FreshchatContextValue,
   FreshchatUser,
+  FreshchatUserState,
   LoginConfig,
   UserProperties,
   OpenPayload,

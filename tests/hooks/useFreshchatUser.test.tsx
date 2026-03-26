@@ -1,9 +1,12 @@
 import { describe, it, expect, vi } from 'vitest';
 import { renderHook } from '@testing-library/react';
 import { useFreshchatUser } from '../../src/hooks/useFreshchatUser';
-import { FreshchatContext, defaultContextValue } from '../../src/context/FreshchatContext';
+import { FreshchatContext } from '../../src/context/FreshchatContext';
 import type { FreshchatContextValue } from '../../src/types';
 import type { ReactNode } from 'react';
+
+const noop = () => {};
+const asyncNoop = async () => {};
 
 function createWrapper(value: FreshchatContextValue) {
   return function Wrapper({ children }: { children: ReactNode }) {
@@ -15,6 +18,28 @@ function createWrapper(value: FreshchatContextValue) {
   };
 }
 
+function makeContextValue(overrides: Partial<FreshchatContextValue> = {}): FreshchatContextValue {
+  return {
+    isLoaded: false,
+    isInitialized: false,
+    isOpen: false,
+    unreadCount: 0,
+    open: noop,
+    close: noop,
+    destroy: noop,
+    track: noop,
+    setTags: noop,
+    setFaqTags: noop,
+    setLocale: noop,
+    user: null,
+    isLoggedIn: false,
+    login: asyncNoop,
+    logout: asyncNoop,
+    updateUser: asyncNoop,
+    ...overrides,
+  };
+}
+
 describe('useFreshchatUser', () => {
   it('should return user state and actions', () => {
     const mockLogin = vi.fn();
@@ -22,14 +47,13 @@ describe('useFreshchatUser', () => {
     const mockUpdate = vi.fn();
 
     const { result } = renderHook(() => useFreshchatUser(), {
-      wrapper: createWrapper({
-        ...defaultContextValue,
+      wrapper: createWrapper(makeContextValue({
         user: { externalId: 'user-1', firstName: 'Jane' },
         isLoggedIn: true,
         login: mockLogin,
         logout: mockLogout,
         updateUser: mockUpdate,
-      }),
+      })),
     });
 
     expect(result.current.user?.externalId).toBe('user-1');
@@ -41,10 +65,16 @@ describe('useFreshchatUser', () => {
 
   it('should return null user when not logged in', () => {
     const { result } = renderHook(() => useFreshchatUser(), {
-      wrapper: createWrapper(defaultContextValue),
+      wrapper: createWrapper(makeContextValue()),
     });
 
     expect(result.current.user).toBeNull();
     expect(result.current.isLoggedIn).toBe(false);
+  });
+
+  it('should throw when used outside FreshchatProvider', () => {
+    expect(() => {
+      renderHook(() => useFreshchatUser());
+    }).toThrow('must be used within a <FreshchatProvider>');
   });
 });

@@ -28,6 +28,7 @@
     "react-dom": ">=16.8.0"
   },
   "devDependencies": {
+    "@microsoft/api-extractor": "^7.57.7",
     "@testing-library/jest-dom": "^6.6.3",
     "@testing-library/react": "^16.1.0",
     "@types/react": "^19.0.0",
@@ -53,5 +54,13 @@
     "LICENSE"
   ],
   "sideEffects": false,
-  "keywords": ["freshchat", "react", "hooks", "typescript", "freshworks", "live-chat", "widget"]
+  "keywords": [
+    "freshchat",
+    "react",
+    "hooks",
+    "typescript",
+    "freshworks",
+    "live-chat",
+    "widget"
+  ]
 }

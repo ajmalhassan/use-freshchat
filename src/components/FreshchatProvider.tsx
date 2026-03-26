@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FreshchatContext } from '../context/FreshchatContext';
 import { loadFreshchatScript } from '../utils/loader';
 import { isBrowser, getFcWidget } from '../utils/guards';
@@ -6,6 +6,32 @@ import type {
   FreshchatProviderProps, FreshchatUser, LoginConfig,
   UserProperties, OpenPayload, FaqTagConfig, SupportedLocale
 } from '../types';
+
+type EventHandler = (resp?: unknown) => void;
+
+function attachListeners(
+  handlers: {
+    onLoaded: EventHandler;
+    onOpened: EventHandler;
+    onClosed: EventHandler;
+    onUnread: EventHandler;
+  }
+): () => void {
+  const fc = window.fcWidget;
+  if (!fc) return () => {};
+
+  fc.on('widget:loaded', handlers.onLoaded);
+  fc.on('widget:opened', handlers.onOpened);
+  fc.on('widget:closed', handlers.onClosed);
+  fc.on('unreadCount:notify', handlers.onUnread);
+
+  return () => {
+    fc.off('widget:loaded', handlers.onLoaded);
+    fc.off('widget:opened', handlers.onOpened);
+    fc.off('widget:closed', handlers.onClosed);
+    fc.off('unreadCount:notify', handlers.onUnread);
+  };
+}
 
 export function FreshchatProvider({
   token,
@@ -29,14 +55,55 @@ export function FreshchatProvider({
   const [unreadCount, setUnreadCount] = useState(0);
   const [user, setUser] = useState<FreshchatUser | null>(null);
 
+  // Refs for callback props to avoid stale closures in event handlers
+  const onLoadRef = useRef(onLoad);
+  const onOpenRef = useRef(onOpen);
+  const onCloseRef = useRef(onClose);
+  const onUnreadCountRef = useRef(onUnreadCount);
+  const debugRef = useRef(debug);
+
+  // Ref to track cleanup function for current listeners
+  const cleanupListenersRef = useRef<(() => void) | null>(null);
+  const cleanupUserCreatedRef = useRef<(() => void) | null>(null);
+
+  useEffect(() => { onLoadRef.current = onLoad; }, [onLoad]);
+  useEffect(() => { onOpenRef.current = onOpen; }, [onOpen]);
+  useEffect(() => { onCloseRef.current = onClose; }, [onClose]);
+  useEffect(() => { onUnreadCountRef.current = onUnreadCount; }, [onUnreadCount]);
+  useEffect(() => { debugRef.current = debug; }, [debug]);
+
   const log = useCallback((...args: unknown[]) => {
-    if (debug) console.log('[use-freshchat]', ...args);
-  }, [debug]);
+    if (debugRef.current) console.log('[use-freshchat]', ...args);
+  }, []);
+
+  // Stable event handlers that read from refs
+  const stableHandlers = useMemo(() => ({
+    onLoaded: () => {
+      setIsLoaded(true);
+      onLoadRef.current?.();
+      log('widget:loaded');
+    },
+    onOpened: () => {
+      setIsOpen(true);
+      onOpenRef.current?.();
+    },
+    onClosed: () => {
+      setIsOpen(false);
+      onCloseRef.current?.();
+    },
+    onUnread: (resp?: unknown) => {
+      const count = (resp as { count: number })?.count ?? 0;
+      setUnreadCount(count);
+      onUnreadCountRef.current?.(count);
+    },
+  }), [log]);
 
   // ── INIT (anonymous mode) ──────────────────────────────────────────────
   const initAnonymous = useCallback(async () => {
     if (!isBrowser) return;
     await loadFreshchatScript(host);
+
+    if (!window.fcWidget) return;
 
     window.fcWidget.init({
       token,
@@ -48,34 +115,17 @@ export function FreshchatProvider({
       ...(config && { config }),
     });
 
-    window.fcWidget.on('widget:loaded', () => {
-      setIsLoaded(true);
-      onLoad?.();
-      log('widget:loaded');
-    });
-
-    window.fcWidget.on('widget:opened', () => {
-      setIsOpen(true);
-      onOpen?.();
-    });
-
-    window.fcWidget.on('widget:closed', () => {
-      setIsOpen(false);
-      onClose?.();
-    });
-
-    window.fcWidget.on('unreadCount:notify', (resp: unknown) => {
-      const count = (resp as { count: number }).count;
-      setUnreadCount(count);
-      onUnreadCount?.(count);
-    });
+    // Clean up previous listeners before attaching new ones
+    cleanupListenersRef.current?.();
+    cleanupListenersRef.current = attachListeners(stableHandlers);
 
     setIsInitialized(true);
     log('init anonymous');
-  }, [token, host, siteId, locale, tags, faqTags, config, onLoad, onOpen, onClose, onUnreadCount, log]);
+  }, [token, host, siteId, locale, tags, faqTags, config, stableHandlers, log]);
 
   useEffect(() => {
     if (!isBrowser) return;
+
     if (lazyLoad) {
       const id = typeof requestIdleCallback !== 'undefined'
         ? requestIdleCallback(() => { initAnonymous(); })
@@ -83,9 +133,22 @@ export function FreshchatProvider({
       return () => {
         if (typeof requestIdleCallback !== 'undefined') cancelIdleCallback(id as number);
         else clearTimeout(id as number);
+        // Cleanup widget on unmount
+        cleanupListenersRef.current?.();
+        cleanupUserCreatedRef.current?.();
+        if (window.fcWidget?.isInitialized()) {
+          window.fcWidget.destroy();
+        }
       };
     } else {
       initAnonymous();
+      return () => {
+        cleanupListenersRef.current?.();
+        cleanupUserCreatedRef.current?.();
+        if (isBrowser && window.fcWidget?.isInitialized()) {
+          window.fcWidget.destroy();
+        }
+      };
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // Run once on mount
@@ -103,7 +166,9 @@ export function FreshchatProvider({
     log('login called for', externalId);
 
     // If widget already has a different user session, clear it first
-    if (window.fcWidget.isInitialized()) {
+    if (window.fcWidget?.isInitialized()) {
+      cleanupListenersRef.current?.();
+      cleanupUserCreatedRef.current?.();
       await window.fcWidget.user.clear();
       window.fcWidget.destroy();
       setIsInitialized(false);
@@ -111,6 +176,7 @@ export function FreshchatProvider({
     }
 
     await loadFreshchatScript(host);
+    if (!window.fcWidget) return;
 
     window.fcWidget.init({
       token,
@@ -124,46 +190,50 @@ export function FreshchatProvider({
     setIsInitialized(true);
 
     // Re-attach core event listeners after re-init
-    window.fcWidget.on('widget:loaded', () => { setIsLoaded(true); onLoad?.(); });
-    window.fcWidget.on('widget:opened', () => { setIsOpen(true); onOpen?.(); });
-    window.fcWidget.on('widget:closed', () => { setIsOpen(false); onClose?.(); });
-    window.fcWidget.on('unreadCount:notify', (resp: unknown) => {
-      setUnreadCount((resp as { count: number }).count);
-    });
+    cleanupListenersRef.current = attachListeners(stableHandlers);
 
-    // Check if user exists in Freshchat
-    window.fcWidget.user.get((resp: { status: number; data?: unknown }) => {
-      const status = resp?.status;
+    // Promisify the user.get + user:created flow
+    await new Promise<void>((resolve) => {
+      window.fcWidget!.user.get((resp: { status: number; data?: unknown }) => {
+        const status = resp?.status;
 
-      if (status !== 200) {
-        // User not found — set properties which will trigger user creation
-        log('user not found (status', status, '), setting properties');
-        window.fcWidget.user.setProperties({
-          firstName,
-          lastName,
-          email,
-          phone,
-          phoneCountryCode,
-          ...meta,
-        });
-      } else {
-        log('user found in Freshchat');
-      }
-
-      // Always listen for user:created — fires when Freshchat creates the user
-      // and assigns a restoreId for the first time
-      window.fcWidget.on('user:created', async (createdResp: unknown) => {
-        const typed = createdResp as { status: number; data?: { restoreId?: string } };
-        if (typed?.status === 200 && typed.data?.restoreId) {
-          const newRestoreId = typed.data.restoreId;
-          log('restoreId generated:', newRestoreId);
-
-          setUser(prev => prev ? { ...prev, restoreId: newRestoreId } : null);
-
-          if (onRestoreIdGenerated) {
-            await onRestoreIdGenerated(newRestoreId);
-          }
+        if (status !== 200) {
+          log('user not found (status', status, '), setting properties');
+          window.fcWidget!.user.setProperties({
+            firstName,
+            lastName,
+            email,
+            phone,
+            phoneCountryCode,
+            ...meta,
+          });
+        } else {
+          log('user found in Freshchat');
         }
+
+        // Clean up previous user:created listener
+        cleanupUserCreatedRef.current?.();
+
+        const userCreatedHandler = async (createdResp?: unknown) => {
+          const typed = createdResp as { status: number; data?: { restoreId?: string } };
+          if (typed?.status === 200 && typed.data?.restoreId) {
+            const newRestoreId = typed.data.restoreId;
+            log('restoreId generated:', newRestoreId);
+
+            setUser(prev => prev ? { ...prev, restoreId: newRestoreId } : null);
+
+            if (onRestoreIdGenerated) {
+              await onRestoreIdGenerated(newRestoreId);
+            }
+          }
+        };
+
+        window.fcWidget!.on('user:created', userCreatedHandler);
+        cleanupUserCreatedRef.current = () => {
+          window.fcWidget?.off('user:created', userCreatedHandler);
+        };
+
+        resolve();
       });
     });
 
@@ -177,12 +247,15 @@ export function FreshchatProvider({
     });
 
     log('login complete for', externalId);
-  }, [token, host, siteId, locale, onLoad, onOpen, onClose, log]);
+  }, [token, host, siteId, locale, stableHandlers, log]);
 
   // ── LOGOUT FLOW ────────────────────────────────────────────────────────
   const logout = useCallback(async () => {
     if (!isBrowser || !window.fcWidget?.isInitialized()) return;
     log('logout called');
+
+    cleanupListenersRef.current?.();
+    cleanupUserCreatedRef.current?.();
 
     await window.fcWidget.user.clear();
     window.fcWidget.destroy();
@@ -200,7 +273,7 @@ export function FreshchatProvider({
 
   // ── UPDATE USER ────────────────────────────────────────────────────────
   const updateUser = useCallback(async (props: UserProperties) => {
-    if (!isBrowser) return;
+    if (!isBrowser || !window.fcWidget) return;
     await window.fcWidget.user.update({
       firstName: props.firstName,
       lastName: props.lastName,
@@ -222,6 +295,8 @@ export function FreshchatProvider({
   }, []);
 
   const destroy = useCallback(() => {
+    cleanupListenersRef.current?.();
+    cleanupUserCreatedRef.current?.();
     getFcWidget()?.destroy();
     setIsInitialized(false);
     setIsLoaded(false);
@@ -243,25 +318,31 @@ export function FreshchatProvider({
     getFcWidget()?.user.setLocale(newLocale);
   }, []);
 
+  const contextValue = useMemo(() => ({
+    isLoaded,
+    isInitialized,
+    isOpen,
+    unreadCount,
+    open,
+    close,
+    destroy,
+    track,
+    setTags: setTagsFn,
+    setFaqTags: setFaqTagsFn,
+    setLocale: setLocaleFn,
+    user,
+    isLoggedIn: user !== null,
+    login,
+    logout,
+    updateUser,
+  }), [
+    isLoaded, isInitialized, isOpen, unreadCount,
+    open, close, destroy, track, setTagsFn, setFaqTagsFn, setLocaleFn,
+    user, login, logout, updateUser,
+  ]);
+
   return (
-    <FreshchatContext.Provider value={{
-      isLoaded,
-      isInitialized,
-      isOpen,
-      unreadCount,
-      open,
-      close,
-      destroy,
-      track,
-      setTags: setTagsFn,
-      setFaqTags: setFaqTagsFn,
-      setLocale: setLocaleFn,
-      user,
-      isLoggedIn: user !== null,
-      login,
-      logout,
-      updateUser,
-    }}>
+    <FreshchatContext.Provider value={contextValue}>
       {children}
     </FreshchatContext.Provider>
   );
