@@ -17,9 +17,8 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      - run: npm install -g npm@latest
       - run: npm ci
       - run: npm test
       - run: npm run build
-      - run: |
-          npm config set //registry.npmjs.org/:_authToken ''
-          npm publish --provenance --access public
+      - run: npm publish --provenance --access public
